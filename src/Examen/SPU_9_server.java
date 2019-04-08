@@ -53,10 +53,9 @@ public class SPU_9_server {
         tipusMissatge = st.nextToken();			//CADA VEGADA QUE FEM "st.nextToken()" AGAFEM EL SEGÜENT ELEMENT SEPARAT PER "separador".
         System.out.println(LocalTime.now() + ": SERVER.procesarMissatgeDelClient(): tipusMissatge rebut = '" + tipusMissatge + "'."); 
         System.out.println();
-        
-        
-        
-        
+
+
+        return new String[0];
     }
     
     
