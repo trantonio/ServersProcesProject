@@ -1,12 +1,19 @@
+/*
+ * To change this license header, choose License Headers in Project Properties.
+ * To change this template file, choose Tools | Templates
+ * and open the template in the editor.
+ */
 package Aitor;
 
-import helpers.Crypto;
-
-import javax.crypto.Cipher;
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.security.InvalidKeyException;
 import java.security.KeyFactory;
+import java.security.KeyPair;
 import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
 import java.security.spec.InvalidKeySpecException;
@@ -15,260 +22,405 @@ import java.util.Scanner;
 import java.util.StringTokenizer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import com.db4o.Db4oEmbedded;
+import com.db4o.ObjectContainer;
+import com.db4o.ObjectSet;
+import com.db4o.config.EmbeddedConfiguration;
+import com.db4o.query.Predicate;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.IvParameterSpec;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.OutputStreamWriter;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+import sun.misc.BASE64Decoder;
+import sun.misc.BASE64Encoder;
 
-@SuppressWarnings("Duplicates")
+/**
+ *
+ * @author iam8799345
+ */
 public class SPU_9_server {
-    private static final String CLOSE = "TANCARCONNEXIO";
-    private static final String START = "INICIARCONNEXIO";
-    private static final String CHAT = "CHAT";
-    private static final String RCTRL = "RETORNCTRL";
-    private static final String PKEY = "CLAUPUBLICA";
-    private static final String MSG = "MISSATGEENCRIPTAT";
-    private static final String MSGEND = "MISSATGEENCRIPTATFI";
 
     static final int PORT = 9090;
-    static final String SEPARATOR = "$##$";
-    private static boolean endCom = false;
+    private static boolean end = false;
+    static int keyPairLength = 512;
+    static int secretKeyLength = 128;
+    public static KeyPair keyPair;
+    public static SecretKey keySimetric;
+    static String[] tipus = {"TANCARCONNEXIO", "CHAT", "RETORNCTRL", "CLAUPUBLICA", "MISSATGEENCRIPTAT", "MISSATGEENCRIPTATFI"};
 
-    private static PublicKey clientPublicKey;
+    HashMap<Integer, Email_Dades> emails = new HashMap<>();
 
-    private static void listen() {
+    public void listen() throws NoSuchAlgorithmException, InvalidKeySpecException {
         Socket clientSocket = null;
-
-        //Es crea un ServerSocket que atendrà el port nº PORT a l'espera de clients que demanin comunicar-se.
-        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
-            while (!endCom) {
+        try (ServerSocket serverSocket = new ServerSocket(PORT);) {
+            //Es crea un ServerSocket que atendrà el port nº PORT a l'espera de
+            //clients que demanin comunicar-se.
+            while (!end) {
+                //El mètode accept resta a l'espera d'una petició i en el moment de
+                //produir-se crea una instància específica de sòcol per suportar
+                //la comunicació amb el client acceptat.
                 clientSocket = serverSocket.accept();
+
                 //Processem la petició del client.
-                processClientCommunication(clientSocket);
+                proccesClientRequest(clientSocket);
 
                 //Tanquem el sòcol temporal per atendre el client.
                 closeClient(clientSocket);
-                System.out.println("El client s'ha desconnectat, esperant a que es connecti un altre client...");
             }
             //Tanquem el sòcol principal
-            if((serverSocket != null) && (!serverSocket.isClosed())){
+            if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();
             }
-        } catch (IOException e) {
-            e.printStackTrace();
+        } catch (IOException ex) {
+            Logger.getLogger(SPU_9_server.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
+    static BufferedReader in = null;
+    static PrintStream outToClient = null;
 
-    private static void processClientCommunication(Socket clientSocket) {
-        BufferedReader clientIN = null;
-        PrintWriter clientOUT = null;
+
+    public void proccesClientRequest(Socket clientSocket) throws NoSuchAlgorithmException, InvalidKeySpecException {
+        boolean farewellMessage = false;
         String clientMessage = "";
-        String messageToClient[] = {"", ""}; // [0]header, [1]body
 
         try {
-            clientIN = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-            clientOUT = new PrintWriter(new OutputStreamWriter(clientSocket.getOutputStream()), true);
+            in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+            outToClient = new PrintStream(clientSocket.getOutputStream());
 
-            // Processa la petició de connexió del client.
             do {
-                clientMessage = clientIN.readLine();
-                System.out.println("============= C: "+clientMessage);
+                //Processem el missatge del client i generem la resposta. Si
+                //clientMessage és buida generarem el missatge de benvinguda.
+                String dataToSend = processData(clientMessage);
 
-                if (!clientMessage.equals("!")) {
-                    messageToClient = processClientMessage(clientMessage, clientIN, clientSocket, clientOUT);
-
-                    if (!messageToClient[0].equals(MSG)) {
-                        clientOUT.println(messageToClient[1]);
-                        clientOUT.flush();
-                    } else {
-                        sendCryptedMessage(messageToClient, clientOUT);
-                    }
+                if (!dataToSend.equalsIgnoreCase("")) {
+                    outToClient.println(dataToSend);
+                    outToClient.flush();
                 }
-            } while (!messageToClient[0].equals(CLOSE));
-        } catch (IOException e) {
-            e.printStackTrace();
+
+                if (isFarewellMessage(dataToSend)) {
+                    closeClient(clientSocket);
+                    break;
+                }
+
+                clientMessage = in.readLine();
+                farewellMessage = isFarewellMessage(clientMessage);
+            } while ((clientMessage) != null && !farewellMessage);
+
+        } catch (IOException ex) {
+            System.err.println(ex);
         }
     }
 
-    private static void sendCryptedMessage(String[] messageToClient, PrintWriter clientOUT) {
-        // TODO
-        //Enviem el codi MISSATGEENCRIPTAT.
-
-        //Enviem el text encriptat. Fem 1 enviamente de cada linia que conté.
-
-        //Enviem el codi CLAUENCRIPTADA.
-
-        //Enviem la clau AES encriptada. Fem 1 enviamente de cada linia que conté.
-
-        //Enviem el codi MISSATGEENCRIPTATFI.
-        clientOUT.println(MSGEND + SEPARATOR);
-        clientOUT.flush();
-    }
-
-    private static String[] processClientMessage(String clientMessage, BufferedReader clientIN, Socket clientSocket, PrintWriter clientOUT) {
-        StringTokenizer st = new StringTokenizer(clientMessage, SEPARATOR);
-        String messageType = st.nextToken();
-        String messageBody = st.nextToken();
-        String messageToClient[] = {"", ""};
-
-        boolean opcioCorrecta;
-        String opcio;
-
-        System.out.printf("MiniLog. Missatge del client => H: %s B: %s\n\n", messageType, messageBody);
-
-        switch (messageType) {
-            case START: {
-                System.out.println("=== INICI DE LA CONNEXIÓ AMB UN CLIENT ===");
-                break;
-            }
-            case CLOSE: {
-                System.out.println("=== FI DE LA CONNEXIÓ AMB EL CLIENT ===");
-                System.out.println("El server tanca la comunicació perquè el client a enviat un tancament de comunicacions.");
-                break;
-            }
-            case CHAT: {
-                System.out.println("=== REBUT UN XAT ===");
-                System.out.println("Client: " + messageBody);
-                break;
-            }
-            case PKEY: {
-                //LLegim la long. de la clau publica que ens envien.
-                int length = Integer.parseInt(messageBody);
-                byte[] publicKeyClientEnBytes = new byte[length];
-                System.out.println("Tamany de la clau publica del server: " + length);
-
-                //LLegim la clau publica que ens envien en byte (i no en String).
-                try {
-                    DataInputStream dIn = new DataInputStream(clientSocket.getInputStream());
-                    dIn.readFully(publicKeyClientEnBytes, 0, length);
-                    clientPublicKey = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(publicKeyClientEnBytes));
-                } catch (IOException | NoSuchAlgorithmException | InvalidKeySpecException e) {
-                    e.printStackTrace();
-                }
-                System.out.println("Clau rebuda.");
-                break;
-            }
-        }
-
-        if (!messageType.equals(CLOSE)) {
-            Scanner sc = new Scanner(System.in);
-            opcioCorrecta = false;
-            do {
-                System.out.println("---------------- SERVER ----------------");
-                System.out.println("0. Desconnectar-se del CLIENT");
-                System.out.println();
-                System.out.println("   ENCRIPTACIÓ ASIMÈTRICA (RSA amb clau embolcallada)");
-                System.out.println("1. Generar clau simètrica i público-privades");
-                System.out.println("2. Enviar clau pública al CLIENT");
-                System.out.println("3. Encriptar missatge amb RSA amb clau embolcallada");
-                System.out.println("4. Enviar el missatge encriptat al CLIENT");
-                System.out.println();
-                System.out.println("    SENSE ENCRIPTACIÓ");
-                System.out.println("11. Enviar un missatge al CLIENT (chat)");
-                System.out.println("12. Retornar el control de les comunicacions al CLIENT");
-                System.out.println("15. Enviar un missatge encriptat al CLIENT");
-                System.out.println();
-                System.out.println("21. Enviar un fitxer al CLIENT");
-                System.out.println();
-                System.out.println("50. Tancar el programa (equival al menú 0)");
-                System.out.println();
-                System.out.print("opció?: ");
-
-                opcio = sc.next();
-
-                switch (opcio) {
-                    case "0": {
-                        messageBody = CLOSE + SEPARATOR + "El server tanca comunicació.";
-                        opcioCorrecta = true;
-                        break;
-                    }
-                    case "1": {
-                        Crypto.guardarSecretKey(Crypto.generadorDeClausSimetriques(128));
-                        Crypto.guardarKeyPair(Crypto.generadorDeClausAsimetriques(512));
-                        System.out.println("Claus generades.");
-                        opcioCorrecta = false;
-                        break;
-                    }
-                    case "2": {
-                        // Enviem la long. de la clau publica.
-                        String keyLong = Integer.toString(Crypto.keyPair.getPublic().getEncoded().length);
-                        System.out.println("Tamany de la clau pública: " + keyLong);
-                        messageBody = PKEY + SEPARATOR + keyLong;
-                        clientOUT.println(messageBody);
-                        clientOUT.flush();
-
-                        // Enviem la clau publica en bytes (i no en String).
-                        DataOutputStream dataOutputStream;
-                        try {
-                            dataOutputStream = new DataOutputStream(clientSocket.getOutputStream());
-                            dataOutputStream.write(Crypto.keyPair.getPublic().getEncoded());
-                            dataOutputStream.flush();
-                            System.out.println("Enviada la clau publica al server.");
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        }
-                        messageBody = "!";
-                        opcioCorrecta = true;
-                        break;
-                    }
-                    case "11": {
-                        Scanner sc2 = new Scanner(System.in);
-                        System.out.print("SERVER.procesarMissatgeDelClient(): quin missatge vols enviar al server?: ");
-                        String message = sc2.nextLine();
-                        messageBody = CHAT + SEPARATOR + message;
-                        opcioCorrecta = true;
-                        break;
-                    }
-                    case "12": {
-                        messageBody = RCTRL + SEPARATOR + "El server retorna el control de les comunicacions al client.";
-                        opcioCorrecta = true;
-                        break;
-                    }
-                    case "50": {
-                        messageBody = CLOSE + SEPARATOR + "El server tanca la comunicació.";
-                        opcioCorrecta = true;
-                        break;
-                    }
-                    default:
-                        System.out.println("COMANDA NO RECONEGUDA");
-                }
-            } while (opcioCorrecta != true);
-
-            if (!messageBody.equals("!")) {
-                st = new StringTokenizer(messageBody, SEPARATOR);
-                messageType = st.nextToken();
-            }
-
-        } else {
-            messageType = CLOSE;
-            messageBody = CLOSE + SEPARATOR + "El server tanca la comunicació perquè el client a enviat un tancament de comunicacions.";
-        }
-
-        messageToClient[0] = messageType;
-        messageToClient[1] = messageBody;
-        System.out.println("============================="+messageBody);
-
-        return messageToClient;
-    }
-
-    private static void closeClient(Socket clientSocket) {
+    private void closeClient(Socket clientSocket) {
         //Si falla el tancament no podem fer gaire cosa, només enregistrar el problema.
-
-        //Tancament de tots els recursos.
-        if((clientSocket != null) && (!clientSocket.isClosed())){
-            try {
-                if(!clientSocket.isInputShutdown()){
+        try {
+            //Tancament de tots els recursos.
+            if (clientSocket != null && !clientSocket.isClosed()) {
+                if (!clientSocket.isInputShutdown()) {
                     clientSocket.shutdownInput();
                 }
-                if(!clientSocket.isOutputShutdown()){
+                if (!clientSocket.isOutputShutdown()) {
                     clientSocket.shutdownOutput();
                 }
                 clientSocket.close();
-            } catch (IOException ex) {
-                Logger.getLogger(SPU_9_server.class.getName()).log(Level.SEVERE, null, ex);
             }
+        } catch (IOException ex) {
+            //Enregistrem l’error amb un objecte Logger.
+            Logger.getLogger(SPU_9_server.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
 
-    public static void main(String[] args) {
-        System.out.println(Thread.currentThread().getName() + " - INICI");
-        listen();
-        System.out.println(Thread.currentThread().getName() + " - FI");
+    private boolean isFarewellMessage(String clientMessage) {
+        return clientMessage.contains(tipus[0]);
     }
+    int contador = 0;
+
+
+    private String processData(String clientMessage) {
+        System.out.println("Cliente ha dicho: " + clientMessage);
+        if (contador == 0) {
+            contador++;
+            return "Bienvenido Cliente";
+        }
+        if (clientMessage.contains("CLAUPUBLICA")) {
+            recibirPublicKey(clientMessage);
+        }
+
+        if (clientMessage.contains(tipus[4])) {
+            System.out.println("Descifrando mensaje...");
+            desEncrypt();
+        }
+
+        if (clientMessage.startsWith("EMAIL$##$")) {
+            System.out.println("Recibiendo email...");
+            System.out.println(clientMessage);
+            recibiendoEmail(clientMessage);
+            return "";
+        }
+
+        if (clientMessage.startsWith("CONSULTAREMAILINICIO")) {
+            System.out.println("Consultando emails...");
+            consultarEmail(clientMessage);
+            return "";
+        }
+
+        if (clientMessage.startsWith("NUMEROEMAIL")) {
+            System.out.println("Enviando fichero...");
+            enviandoFichero(clientMessage);
+            return "";
+        }
+
+        return "";
+    }
+    PublicKey clauPublica;
+    static String separador = "$##$";
+    Scanner sc = new Scanner(System.in);
+
+    public String menu() {
+
+        boolean exit = false;
+        Scanner scanner = new Scanner(System.in);
+
+        do {
+            System.out.println("0. Desconnectar-se del CLIENT / SERVER\n"
+                    + "1. Enviar un missatge al CLIENT / SERVER\n"
+                    + "2. Retornar el control de les comunicacions al CLIENT / SERVER\n"
+                    + "11. Generar clau simètrica i público-privades\n"
+                    + "12. Enviar clau pública al CLIENT / SERVER\n"
+                    + "13. Encriptar missatge amb RSA amb clau embolcallada\n"
+                    + "14. Enviar el missatge encriptat al CLIENT / SERVER");
+            switch (scanner.nextInt()) {
+                case 0:
+                    String tancar = tipus[0] + separador + "El server tanca la comunicació.";
+                    return tancar;
+                case 1:
+                    String missatge = tipus[1] + separador + sc.nextLine();
+                    System.out.println(missatge);
+                    return missatge;
+                case 2:
+                    String control = tipus[2] + separador + "El Servidor retorna el control de les comunicacions al Client.";
+                    System.out.println(control);
+                    return control;
+                case 11:
+                    keyPair = Encrypt.generadorDeClausAsimetriques();
+                    keySimetric = Encrypt.generadorDeClausSimetriques();
+                    break;
+                case 12:
+                    sendThePublicKey();
+                    return "";
+                case 13:
+                    textAndKey = Encrypt.EncryptAsimetric(sc.nextLine(), keySimetric, clauPublica);
+                    break;
+                case 14:
+                    String mensajeAndKey = Encrypt.enviarMensajeYKey(textAndKey);
+                    sendMessage(mensajeAndKey);
+                    return "";
+                default:
+                    break;
+            }
+
+        } while (!exit);
+        return "";
+    }
+
+    private void enviandoFichero(String clientMessage) {
+        StringTokenizer st = new StringTokenizer(clientMessage, separador);
+        st.nextToken();
+        int emailNum = Integer.parseInt(st.nextToken());
+        String nomFitxer = emails.get(emailNum).getNomFitxer();
+        if (nomFitxer.equalsIgnoreCase("")) {
+            outToClient.println("No hay archivo adjunto");
+            outToClient.flush();
+        } else {
+
+            File tmp = new File(PATH + File.separator + nomFitxer);
+
+            outToClient.println("Contenido del fitxer adjunt: " + nomFitxer);
+            outToClient.flush();
+            String cadena = "";
+            try (BufferedReader br = new BufferedReader(new FileReader(tmp));) {
+                while ((cadena = br.readLine()) != null) {
+                    outToClient.println(cadena);
+                    outToClient.flush();
+                }
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+            outToClient.println("FINARCHIVO");
+            outToClient.flush();
+        }
+
+    }
+
+    private void consultarEmail(String clientMessage) {
+        StringTokenizer st = new StringTokenizer(clientMessage, separador);
+        st.nextToken();
+        String usuario = st.nextToken();
+        emails = Email.consultarEmails(usuario);
+        System.out.println(emails.size() + "*********************************");
+
+        outToClient.println("Email.consultarEmails().inici");
+        outToClient.flush();
+
+        for (Map.Entry<Integer, Email_Dades> entry : emails.entrySet()) {
+            outToClient.println(entry.getKey() + "\t" + entry.getValue());
+            outToClient.flush();
+        }
+        outToClient.println("Email.consultarEmails().fi");
+        outToClient.flush();
+
+        outToClient.println("De quin email vols veure el fitxer?");
+        outToClient.flush();
+
+    }
+
+    private void recibiendoEmail(String clientMessage) {
+        StringBuilder sb = new StringBuilder();
+        StringTokenizer st = new StringTokenizer(clientMessage, separador);
+        st.nextToken();
+        String origen = st.nextToken();
+        String destino = st.nextToken();
+        Calendar dataEnviament = Calendar.getInstance();
+        String dada = st.nextToken();
+        if (!st.hasMoreTokens()) {
+            Email.insertarNouEmail(new Email_Dades(origen, destino, dataEnviament, dataEnviament, dada, ""));
+        } else {
+            String nomFitxer = st.nextToken();
+            Email.insertarNouEmail(new Email_Dades(origen, destino, dataEnviament, dataEnviament, dada, nomFitxer));
+            try {
+                String trosMissatgeTmp = "";
+                while (((trosMissatgeTmp = in.readLine()) != null) && (!trosMissatgeTmp.contains("FINEMAIL"))) {
+
+                    sb.append(trosMissatgeTmp + "\n");
+                }
+                sb.deleteCharAt(sb.length() - 1);
+            } catch (IOException ex) {
+                Logger.getLogger(SPU_9_server.class.getName()).log(Level.SEVERE, null, ex);
+            }
+            try (BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(PATH + File.separator + "client.txt")));) {
+                bw.write(sb.toString());
+            } catch (IOException ex) {
+                ex.printStackTrace();
+                System.err.println(ex);
+            }
+            System.out.println(sb.toString());
+        }
+    }
+
+    final String PATH = "fitxersServer";
+
+    public static void main(String[] args) throws NoSuchAlgorithmException, InvalidKeySpecException {
+        SPU_9_server s = new SPU_9_server();
+        s.listen();
+    }
+
+    private void recibirPublicKey(String clientMessage) {
+        StringTokenizer st = new StringTokenizer(clientMessage, separador);
+        String tipusMissatge = st.nextToken();
+        String fin = "";
+        if (tipusMissatge.equals(tipus[3])) {
+            try {
+                StringBuilder sb = new StringBuilder();
+                String trosMissatgeTmp = "";
+                while (((trosMissatgeTmp = in.readLine()) != null) && (!trosMissatgeTmp.contains("CLAUPUBLICAFI"))) {
+                    sb.append(trosMissatgeTmp + "\n");
+                }
+                //ARA HI HA UN SALT DE LINIA AL FINAL DE MÉS QUE HEM D'ELIMINAR PERQUE LA CLAU    // NO ACABA AMB SALT DE LINIA.
+                fin = trosMissatgeTmp;
+                sb.deleteCharAt(sb.length() - 1);    //Convertim la clau publica rebuda en tipus String a tipus PublicKey.
+                String clauPublicaDelClientEnString = sb.toString();
+                BASE64Decoder decoder = new BASE64Decoder();
+                byte[] clauPublicaDelClientEnByte = decoder.decodeBuffer(clauPublicaDelClientEnString);
+                clauPublica = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(clauPublicaDelClientEnByte));
+            } catch (IOException | NoSuchAlgorithmException | InvalidKeySpecException ex) {
+                Logger.getLogger(SPU_9_server.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+        System.out.println(new BASE64Encoder().encode(clauPublica.getEncoded()));
+        System.out.println(fin);
+    }
+
+    public void sendThePublicKey() {
+        outToClient.println("CLAUPUBLICA" + separador);
+        outToClient.flush();
+        String trosMissatgeTmp;
+        StringTokenizer tokenizer = new StringTokenizer(publicKeyString(), "\n");
+        while (tokenizer.hasMoreElements()) {
+            trosMissatgeTmp = tokenizer.nextToken("\n");
+            outToClient.println(trosMissatgeTmp);
+            outToClient.flush();
+        }
+        outToClient.println("CLAUPUBLICAFI" + separador);
+        outToClient.flush();
+    }
+
+    private String publicKeyString() {
+        String publicKey = new BASE64Encoder().encode(keyPair.getPublic().getEncoded());
+        return publicKey;
+    }
+
+    byte[][] textAndKey = new byte[2][];
+
+    private String desEncrypt() {
+        StringBuilder sb = new StringBuilder();
+        BASE64Decoder decoder = new BASE64Decoder();
+        try {
+            String trosMissatgeTmp = "";
+            while (((trosMissatgeTmp = in.readLine()) != null && (!trosMissatgeTmp.contains(tipus[5])))) {
+                System.out.println(trosMissatgeTmp);
+                sb.append(trosMissatgeTmp + "\n");
+            }
+            sb.deleteCharAt(sb.length() - 1);
+        } catch (IOException ex) {
+            Logger.getLogger(SPU_9_server.class.getName()).log(Level.SEVERE, null, ex);
+        }
+
+        String mensaje = "";
+        String claveSimetrica = "";
+        StringTokenizer tokenizer = new StringTokenizer(sb.toString(), separador);
+        String tipusMissatge = tokenizer.nextToken();
+        if (tipusMissatge.equals(tipus[4])) {
+
+            mensaje = tokenizer.nextToken();
+            System.out.println(mensaje);
+            if (tokenizer.nextToken().equals("CLAUENCRIPTADA")) {
+                claveSimetrica = tokenizer.nextToken();
+                System.out.println(claveSimetrica);
+            }
+        }
+
+        try {
+            byte[] secretKey = decoder.decodeBuffer(claveSimetrica);
+            byte[] mensajeEncrypted = decoder.decodeBuffer(mensaje);
+            mensaje = Encrypt.desencriptarRSA(mensajeEncrypted, secretKey, keyPair);
+        } catch (IOException ex) {
+            System.err.println(ex);
+        }
+        System.out.println(mensaje);
+        return mensaje;
+    }
+
+    private void sendMessage(String mensajeAndKey) {
+        outToClient.println(tipus[4] + separador);
+        outToClient.flush();
+        String trosMissatgeTmp;
+        StringTokenizer tokenizer = new StringTokenizer(mensajeAndKey, "\n");
+        while (tokenizer.hasMoreElements()) {
+            trosMissatgeTmp = tokenizer.nextToken("\n");
+            outToClient.println(trosMissatgeTmp);
+            outToClient.flush();
+        }
+        outToClient.println(tipus[5] + separador);
+        outToClient.flush();
+    }
+
 }
